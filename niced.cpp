@@ -7,12 +7,13 @@
 #include <thread>
 #include <syslog.h>
 #include <sys/resource.h>
-#include <libconfig.h>
-// g++ uatu.cpp -o uatu -lstdc++fs -g
+#include <signal.h>
+#include <sys/stat.h>
+// g++ niced.cpp -o niced -lstdc++fs -g
 
 std::string PROCPath="/proc";
-std::string SearchProcess="cpuload";
-std::string ConfigFile="/home/rob/niced.conf";
+std::string SearchProcess="{?}";
+std::string ConfigFile="niced.conf";
 
 
 int NICEDefault=0;
@@ -227,22 +228,18 @@ PIDDataStruct PIDData(int PIDNum, int SkipSub=0){
 
 void LoadConfig(){
 	
-	
-	//int NICEDefault=0;
-//int NICEThrottled=5;
-//int ThreshHold=10;
-//int ThreshHoldDelay=4;
-	
 	int ConfigError=0;
 	FILE * fp;
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-
+	
     fp = fopen(ConfigFile.c_str(), "r");
-    if (fp == NULL)
+    
+    if (fp == NULL){    
+		std::cout << "! No Config File" << std::endl;
         exit(EXIT_FAILURE);
-
+	}
     while ((read = getline(&line, &len, fp)) != -1) {
         //printf("Retrieved line of length %zu:\n", read);
         //printf("%s", line);
@@ -316,12 +313,54 @@ void LoadConfig(){
     if (line)
         free(line);
 	if (ConfigError==1){
-		
+		std::cout << "Error in Config...." << std::endl;
 		exit(1);
 	}
 }
 
 
+
+static void DaemonizeProcess(){
+	pid_t pid;
+
+    /* Fork off the parent process */
+    pid = fork();
+
+    /* An error occurred */
+    if (pid < 0){
+		syslog (LOG_NOTICE, "Daemonise Failed [0]");
+		//std::cout << "Daemonise Failed [0]" << std::endl;
+        exit(EXIT_FAILURE);
+	}
+    /* Success: Let the parent terminate */
+    if (pid > 0){
+        exit(EXIT_SUCCESS);
+	}
+    /* On success: The child process becomes session leader */
+    if (setsid() < 0){
+		syslog (LOG_NOTICE, "Daemonise Failed [2]");
+		std::cout << "Daemonise Failed [2]" << std::endl;
+        exit(EXIT_FAILURE);
+	}
+    /* Catch, ignore and handle signals */
+    //TODO: Implement a working signal handler */
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+
+    /* Set new file permissions */
+    umask(0);
+
+    /* Change the working directory to the root directory */
+    /* or another appropriated directory */
+    chdir("/");
+
+    /* Close all open file descriptors */
+    int x;
+    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
+    {
+        close (x);
+    }
+}
 
 void UpdatePIDs(){
 	
@@ -533,11 +572,16 @@ void UpdatePIDs(){
 
 int main()
 {
-	
+	syslog (LOG_NOTICE, "Starting...");
+	std::cout << "Starting...." << std::endl;
 	LoadConfig();
-	exit(0);
-	
+	//exit(0);
 	openlog ("uatu", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
+	
+	
+	DaemonizeProcess();
+	
+	
 	syslog (LOG_NOTICE, "Monitoring \"%s\" processes", SearchProcess.c_str());
 	std::cout << "Monitoring \"" << SearchProcess << "\"processes" << std::endl;
 	while (1){
@@ -546,5 +590,5 @@ int main()
 		//sleep_until(system_clock::now() + seconds(1));
 	}
 	closelog ();
-
+	return EXIT_SUCCESS;
 }
